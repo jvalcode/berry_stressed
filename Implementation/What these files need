@@ -1,0 +1,21 @@
+Finish network analysis: Actual response times and client-side statistics.
+
+
+
+Add configurable IP/port: Small client change.
+
+
+
+Implement file naming conventions: Ensure compliance with the rubric.
+
+
+
+Test large files and simultaneous clients: Verify the implementation under realistic conditions.
+
+
+
+Test security and error handling: Confirm robustness.
+
+
+
+Optional bonus: Integrate download recovery.
