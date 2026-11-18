@@ -168,29 +168,104 @@ def upload(sock, reader, args):
             filename=name, file_size=count / (1024 * 1024),
             transfer_time=transfer_time, response_time = 0 )
 
-def download(sock, name):
+def download(sock, name, offset=None):
     path = storage_path(name)
+
     with reserve(path):
         try:
             if not path.is_file():
                 raise OperationError("File not found.")
+
             source = path.open("rb")
+
         except FileNotFoundError as exc:
             raise OperationError("File not found.") from exc
+
         except OSError as exc:
             raise OperationError("Could not open the requested file.") from exc
+
         with source:
             count = os.fstat(source.fileno()).st_size
-            send_message(sock, f"FILE@{count}")
+
+            # Calculate SHA-256 of the complete file
+            import hashlib
+
+            sha256 = hashlib.sha256()
+
+            while True:
+                chunk = source.read(SIZE)
+
+                if not chunk:
+                    break
+
+                sha256.update(chunk)
+
+            file_hash = sha256.hexdigest()
+
+            # Validate resume offset
+            if offset is None:
+                offset = 0
+
+            if offset < 0 or offset > count:
+                raise OperationError("Invalid download offset.")
+
+            # Move to requested position
+            source.seek(offset)
+
+            # Send file information
+            send_message(
+                sock,
+                f"FILE@{count}@{file_hash}"
+            )
+
+            # Send remaining bytes
             start_time = time.perf_counter()
-            send_bytes(sock, source, count)
+
+            send_bytes(
+                sock,
+                source,
+                count - offset
+            )
+
             transfer_time = time.perf_counter() - start_time
+
+        # Confirm transfer completion
         send_message(sock, "OK@Download complete.")
 
-        analyzer.record_transfer( client=str(sock.getpeername()),
-            operation="Download",
-            filename=name, file_size=count / (1024 * 1024),
-            transfer_time=transfer_time, response_time = 0 )
+        # Record network statistics
+        if analyzer is not None:
+            analyzer.record_transfer(
+                client=str(sock.getpeername()),
+                operation="Download",
+                filename=name,
+                file_size=count / (1024 * 1024),
+                transfer_time=transfer_time,
+                response_time=0
+            )
+
+#def download(sock, name):
+    #path = storage_path(name)
+    #with reserve(path):
+        #try:
+            #if not path.is_file():
+                #raise OperationError("File not found.")
+           # source = path.open("rb")
+       # except FileNotFoundError as exc:
+          #  raise OperationError("File not found.") from exc
+      #  except OSError as exc:
+         #   raise OperationError("Could not open the requested file.") from exc
+       # with source:
+         #   count = os.fstat(source.fileno()).st_size
+           # send_message(sock, f"FILE@{count}")
+           # start_time = time.perf_counter()
+          #  send_bytes(sock, source, count)
+          #  transfer_time = time.perf_counter() - start_time
+       # send_message(sock, "OK@Download complete.")
+
+        #analyzer.record_transfer( client=str(sock.getpeername()),
+            #operation="Download",
+            #filename=name, file_size=count / (1024 * 1024),
+           # transfer_time=transfer_time, response_time = 0 )
         
 def delete(sock, name):
     path = storage_path(name)
@@ -228,23 +303,70 @@ def subfolder(sock, action, name):
             ) from exc
     send_message(sock, "OK@Folder created." if action == "create" else "OK@Folder deleted.")
 
-
+ 
 def dispatch(sock, reader, message, role):
     command, _, args = message.partition("@")
+
     if command in {"DELETE", "SUBFOLDER_DELETE"} and role != "admin":
         raise OperationError("This command requires an admin account.")
+
     if command == "DIR":
         directory(sock)
+
     elif command == "UPLOAD":
         upload(sock, reader, args)
+
     elif command == "DOWNLOAD":
-        download(sock, args)
+
+        # Separate filename and optional byte offset.
+        name, separator, raw_offset = args.rpartition("@")
+
+        if separator:
+
+            if (
+                not raw_offset.isascii()
+                or not raw_offset.isdecimal()
+                or len(raw_offset) > 11
+            ):
+                raise OperationError("Invalid download offset.")
+
+            offset = int(raw_offset)
+
+            download(sock, name, offset)
+
+        else:
+            # Original client download command.
+            download(sock, args)
+
     elif command == "DELETE":
         delete(sock, args)
+
     elif command in {"SUBFOLDER_CREATE", "SUBFOLDER_DELETE"}:
-        subfolder(sock, "create" if command == "SUBFOLDER_CREATE" else "delete", args)
+        subfolder(
+            sock,
+            "create" if command == "SUBFOLDER_CREATE" else "delete",
+            args
+        )
+
     else:
         raise OperationError("Unknown command.")
+
+#def dispatch(sock, reader, message, role):
+    #command, _, args = message.partition("@")
+    #if command in {"DELETE", "SUBFOLDER_DELETE"} and role != "admin":
+     #   raise OperationError("This command requires an admin account.")
+    #if command == "DIR":
+     #   directory(sock)
+    #elif command == "UPLOAD":
+     #   upload(sock, reader, args)
+    #elif command == "DOWNLOAD":
+     #   download(sock, args)
+    #elif command == "DELETE":
+     #   delete(sock, args)
+    #elif command in {"SUBFOLDER_CREATE", "SUBFOLDER_DELETE"}:
+     #   subfolder(sock, "create" if command == "SUBFOLDER_CREATE" else "delete", args)
+    #else:
+     #   raise OperationError("Unknown command.")
 
 
 # Client-side operations
