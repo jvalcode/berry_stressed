@@ -19,7 +19,8 @@ SERVER_PATH = "server"
 active_clients = {}
 clients_lock = threading.Lock() # Prevent threads from changing client information at the same time
 analyzer = NetworkAnalyzer()
-filops.analyzer = analyzer
+filops.analyzer = analyzer # allows file operations to record the network statistics
+
 # Send a complete message
 def send_message(conn, message):
     data = (message + "\n").encode(FORMAT)
@@ -31,6 +32,7 @@ def handle_client(conn, addr):
 
     print(f"[NEW CONNECTION] {addr} connected.")
 
+    # Default information before the client logs in
     authenticated = False
     username = None
     access_level = None
@@ -44,6 +46,7 @@ def handle_client(conn, addr):
         }
         print(f"[ACTIVE CLIENTS] {len(active_clients)}")
     
+    # Used for the login challenge, so it can expire after a certain time
     challenge = None
     challenge_time = None
 
@@ -54,13 +57,7 @@ def handle_client(conn, addr):
         send_message(conn, "OK@Welcome to the server")
 
         while True:
-            #Limits the size of the incoming messages
-            
-            #data = reader.readline().decode(FORMAT)
-            data = reader.readline(1024 * 1024 + 1).decode(FORMAT)
-
-            if len(data) > 1024 * 1024:
-                raise ValueError("Command too large.")
+            data = reader.readline().decode(FORMAT)
 
             if not data:
                 break
@@ -69,6 +66,7 @@ def handle_client(conn, addr):
             if not data:
                 continue
 
+            # Keep the full message for file operations, but split it to find the command
             message = data
             data = data.split("@")
             cmd = data[0].upper()
@@ -91,6 +89,7 @@ def handle_client(conn, addr):
                 access_level = None
                 challenge = None
 
+                # Reset the previous client information when a new login is attempted
                 with clients_lock:
                     active_clients[addr]["username"] = None
                     active_clients[addr]["authenticated"] = False
@@ -101,6 +100,7 @@ def handle_client(conn, addr):
                     continue
 
                 # Generate challenge and retrieve salt
+                # This allows the password to be checked without directly sending it
                 challenge = auth.generate_challenge()
                 challenge_time = time.monotonic()
                 salt = auth.USERS[username]["salt"].hex()
@@ -115,6 +115,7 @@ def handle_client(conn, addr):
                     send_message(conn, "ERROR@Invalid response.")
                     continue
 
+                # Make sure there was actually a login request first
                 if challenge is None or username is None:
                     send_message(conn, "ERROR@No login pending.")
                     continue
@@ -123,12 +124,14 @@ def handle_client(conn, addr):
                 current_challenge = challenge
                 challenge = None
 
+                # Give the client 30 seconds to respond to the challenge
                 if time.monotonic() - challenge_time > 30:
                     send_message(conn, "ERROR@Login challenge expired.")
                     continue
 
                 response = data[1]
 
+                # Check the response using authentication.py
                 if auth.verify_response(
                     username, current_challenge, response
                 ):
@@ -166,7 +169,8 @@ def handle_client(conn, addr):
                 else:
                     send_message(conn, "ERROR@Permission denied.")
 
-            # Send commands to commands.py
+            ### File commands are handled separately in file_operations.py
+            # The users access level determines which commands they can use
             elif cmd in [
                 "DIR", "UPLOAD", "DOWNLOAD",
                 "DELETE", "SUBFOLDER_CREATE",
@@ -178,6 +182,7 @@ def handle_client(conn, addr):
                         filops.dispatch(conn, reader, message,
                                         access_level)
                     except filops.OperationError as e:
+                        # Return the error to the client instead of ending the connection
                         send_message(conn, f"ERROR@{e}")
 
                 else: 
@@ -185,6 +190,7 @@ def handle_client(conn, addr):
             else:
                 send_message(conn, "ERROR@Invalid command.")
     except (ConnectionError, OSError, EOFError, ValueError) as e:
+        # If a client disconnects unexpectedly, the server can still handle others
         print(f"[ERROR] Connection lost with {addr}: {e}")
    
     finally:
@@ -196,9 +202,11 @@ def handle_client(conn, addr):
         conn.close()
 
 
+### Start the server
 def main():
     print("Starting the server")
 
+    # Make sure the storage folder exists before accepting clients
     filops.STORAGE.mkdir(parents=True, exist_ok=True)
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(ADDR)  # bind the address
@@ -210,6 +218,7 @@ def main():
         conn, addr = server.accept()
 
         # Assign a thread for each client
+        # This allows multiple clients to connect and use the server at once
         thread = threading.Thread(
             target=handle_client,
             args=(conn, addr)
@@ -220,4 +229,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
