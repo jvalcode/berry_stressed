@@ -1,3 +1,4 @@
+#Final Version
 import json
 import os
 import re
@@ -8,9 +9,12 @@ from threading import Lock
 import time
 import hashlib
 
-analyzer = None # ensure the analyzer is available to the file_operations module, but it will be set in Server.py after the NetworkAnalyzer is created
+analyzer = None # ensure the analyzer is available to the file_operations module, 
+            #but it will be set in Server.py after the NetworkAnalyzer is created
+
 
 # Shared message and transfer helpers
+# Size of each chunk when sending or receiving files
 SIZE = 64 * 1024
 FORMAT = "utf-8"
 MAX_LINE = 1024 * 1024
@@ -23,6 +27,8 @@ def send_message(sock, message):
         raise ValueError("Control message is too long.")
     sock.sendall(data)
 
+
+# Read a full response instead of only part of the message
 def read_message(reader):
     line = reader.readline(MAX_LINE + 1)
     if not line:
@@ -31,12 +37,15 @@ def read_message(reader):
         raise ValueError("Incomplete or oversized control message.")
     return line.decode(FORMAT).rstrip("\r\n")
 
+
 def read_status(reader):
     status, separator, message = read_message(reader).partition("@")
     if not separator:
         raise ValueError("Expected a server reply in STATUS@message format.")
     return status, message
 
+
+# Send the file in chunks rather than loading the whole thing at once
 def send_bytes(sock, source, count):
     while count:
         chunk = source.read(min(SIZE, count))
@@ -45,8 +54,11 @@ def send_bytes(sock, source, count):
         sock.sendall(chunk)
         count -= len(chunk)
 
+
+# Receive the number of bytes the sender said it would send
 def receive_bytes(reader, destination, count):
-    # Reuse the SAME binary reader used for control lines. It may already have buffered the first bytes of the file.
+    # Reuse the SAME binary reader used for control lines. It may already
+    # have buffered the first bytes of the file.
     while count:
         chunk = reader.read(min(SIZE, count))
         if not chunk:
@@ -57,9 +69,10 @@ def receive_bytes(reader, destination, count):
 
 # Server-side operations
 STORAGE = Path(__file__).resolve().parent / "server"
+# Keep track of files that are currently being worked on
 ACTIVE = set()
 LOCK = Lock()
-MAX_FILE = 10 * 1024**3
+MAX_FILE = 10 * 1024**3 # maximum allowed upload size
 WINDOWS_DEVICE = re.compile(r"(?i)^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)")
 
 
@@ -67,9 +80,10 @@ class OperationError(Exception):
     """An error detected at a command boundary, so the session can continue."""
 
 
+### Check file paths before letting them access the server storage
 def storage_path(name):
     root = STORAGE.resolve()
-    parts = name.replace("\\", "/").split("/")
+    parts = name.replace("\\\\", "/").split("/")
     if not name or any(
         not part or part in {".", ".."} or part.endswith((" ", "."))
         or WINDOWS_DEVICE.match(part)
@@ -87,6 +101,8 @@ def storage_path(name):
         raise OperationError("That path is outside server_storage.")
     return path
 
+
+# Prevent two clients from changing or transferring the same file at once
 @contextmanager
 def reserve(path):
     with LOCK:
@@ -99,6 +115,8 @@ def reserve(path):
         with LOCK:
             ACTIVE.remove(path)
 
+
+# Send back the files and folders currently in the server folder
 def directory(sock):
     try:
         names = sorted(
@@ -110,8 +128,10 @@ def directory(sock):
         raise OperationError("Could not read the server storage folder.") from exc
     send_message(sock, "LIST@" + json.dumps(names))
 
+
+### Server upload
 def upload(sock, reader, args):
-    response_start = time.perf_counter()
+    response_start = time.perf_counter() # start measuring how long the server takes to respond
     name, separator, raw_count = args.rpartition("@")
     if not separator or not raw_count.isascii() or not raw_count.isdecimal() or len(raw_count) > 11:
         raise OperationError("Upload requires a filename and a valid byte count.")
@@ -123,6 +143,7 @@ def upload(sock, reader, args):
     with reserve(path):
         if not path.parent.is_dir():
             raise OperationError("The destination folder does not exist.")
+        # Ask before replacing a file that already exists
         if path.exists():
             if not path.is_file():
                 raise OperationError("That destination is not a file.")
@@ -134,6 +155,7 @@ def upload(sock, reader, args):
             if decision != "OVERWRITE":
                 raise OperationError("Expected OVERWRITE or CANCEL.")
 
+        # Write to a temporary file first so incomplete uploads do not replace the original
         try:
             destination = tempfile.NamedTemporaryFile(
                 mode="wb", dir=path.parent, prefix=".upload-", delete=False
@@ -144,7 +166,7 @@ def upload(sock, reader, args):
         temporary = Path(destination.name)
         try:
             with destination:
-                response_time = time.perf_counter() - response_start
+                response_time = time.perf_counter() - response_start # includes the time needed to hash the file # time before server is ready for the file
                 send_message(sock, f"READY@Send file bytes.")
                 start_time = time.perf_counter()
                 receive_bytes(reader, destination, count)
@@ -156,11 +178,13 @@ def upload(sock, reader, args):
         finally:
             temporary.unlink(missing_ok=True)
         send_message(sock, "OK@Upload complete.")
+        # Save the upload statistics to the CSV file
         analyzer.record_transfer( client=str(sock.getpeername()),
             operation="Upload",
             filename=name, file_size=count / (1024 * 1024),
             transfer_time=transfer_time, response_time = response_time )
 
+### Server download
 def download(sock, name, offset=None):
     response_start = time.perf_counter()
     path = storage_path(name)
@@ -183,6 +207,7 @@ def download(sock, name, offset=None):
 
             # Calculate SHA-256 of the complete file
             import hashlib
+
             sha256 = hashlib.sha256()
 
             while True:
@@ -214,7 +239,12 @@ def download(sock, name, offset=None):
             # Send remaining bytes
             start_time = time.perf_counter()
 
-            send_bytes(sock, source, count - offset)
+            send_bytes(
+                sock,
+                source,
+                count - offset
+            )
+
             transfer_time = time.perf_counter() - start_time
 
         # Confirm transfer completion
@@ -254,7 +284,7 @@ def download(sock, name, offset=None):
             #operation="Download",
             #filename=name, file_size=count / (1024 * 1024),
            # transfer_time=transfer_time, response_time = response_time )
-        
+# Delete a file if it exists and is not already being processed
 def delete(sock, name):
     path = storage_path(name)
     with reserve(path):
@@ -268,6 +298,8 @@ def delete(sock, name):
             raise OperationError("Could not delete the file.") from exc
     send_message(sock, "OK@File deleted.")
 
+
+# Create or remove a subfolder, depending on the command
 def subfolder(sock, action, name):
     path = storage_path(name)
     with LOCK:
@@ -290,6 +322,7 @@ def subfolder(sock, action, name):
             ) from exc
     send_message(sock, "OK@Folder created." if action == "create" else "OK@Folder deleted.")
 
+### Figure out which file command the server needs to run
 def dispatch(sock, reader, message, role):
     command, _, args = message.partition("@")
 
@@ -358,6 +391,8 @@ def dispatch(sock, reader, message, role):
 # Client-side operations
 DOWNLOADS = Path(__file__).resolve().parent / "downloads"
 
+
+### Upload a file from the client computer
 def client_upload(client, reader, argument):
     # UPLOAD takes a local path. Send the basename, not the client's full path.
     path = Path(argument)
@@ -371,6 +406,7 @@ def client_upload(client, reader, argument):
         size = os.fstat(source.fileno()).st_size
         send_message(client, f"UPLOAD@{path.name}@{size}")
         status, message = read_status(reader)
+        # Let the user decide whether to overwrite an existing server file
         if status == "EXISTS":
             answer = input(message + " [y/N] ").strip().lower()
             if answer not in {"y", "yes"}:
@@ -386,13 +422,14 @@ def client_upload(client, reader, argument):
         send_bytes(client, source, size)
         print(read_status(reader)[1])
 
+### Download a file to the client computer
 def client_download(client, reader, argument):
-    name = argument.replace("\\", "/").rsplit("/", 1)[-1]
+    name = argument.replace("\\\\", "/").rsplit("/", 1)[-1]
     if not name or name in {".", ".."}:
         print("Usage: DOWNLOAD filename")
         return
 
-    target = DOWNLOADS / name
+    target = DOWNLOADS / name # where the finished file will be saved
 
     try:
         DOWNLOADS.mkdir(exist_ok=True)
@@ -400,6 +437,7 @@ def client_download(client, reader, argument):
             print(f"Local file already exists: {target}. Move it before retrying.")
             return
 
+        # Keep the download temporary until it is finished and checked
         destination = tempfile.NamedTemporaryFile(
             mode="wb", dir=DOWNLOADS, prefix=".download-", delete=False
         )
@@ -436,6 +474,7 @@ def client_download(client, reader, argument):
             for chunk in iter(lambda: downloaded.read(64 * 1024), b""):
                 digest.update(chunk)
 
+        # If the hashes differ, the file was not received correctly
         if digest.hexdigest() != expected_checksum.lower():
             print("Download failed: checksum did not match.")
             return
@@ -453,6 +492,8 @@ def client_download(client, reader, argument):
     finally:
         temporary.unlink(missing_ok=True)
 
+
+# Request the server directory and print the returned list
 def client_directory(client, reader):
     send_message(client, "DIR")
     status, message = read_status(reader)
@@ -462,6 +503,8 @@ def client_directory(client, reader):
     else:
         print(message)
 
+
+### Handle file commands separately from the main client loop
 def run_file_command(client, reader, cmd, argument):
     """Return False for non-file commands so the original loop handles them."""
     if cmd == "SUBFOLDER":
@@ -471,6 +514,7 @@ def run_file_command(client, reader, cmd, argument):
             return True
         cmd, argument = "SUBFOLDER_" + action.upper(), path.lstrip()
 
+    # Connect upload and download commands to their functions
     handlers = {"UPLOAD": client_upload, "DOWNLOAD": client_download}
     if cmd == "DIR":
         client_directory(client, reader)
