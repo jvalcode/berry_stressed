@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
 import time
+import hashlib
 
 analyzer = None # ensure the analyzer is available to the file_operations module, 
             #but it will be set in Server.py after the NetworkAnalyzer is created
@@ -401,18 +402,20 @@ def client_upload(client, reader, argument):
         send_bytes(client, source, size)
         print(read_status(reader)[1])
 
-
 def client_download(client, reader, argument):
     name = argument.replace("\\", "/").rsplit("/", 1)[-1]
     if not name or name in {".", ".."}:
         print("Usage: DOWNLOAD filename")
         return
+
     target = DOWNLOADS / name
+
     try:
         DOWNLOADS.mkdir(exist_ok=True)
         if target.exists() or target.is_symlink():
             print(f"Local file already exists: {target}. Move it before retrying.")
             return
+
         destination = tempfile.NamedTemporaryFile(
             mode="wb", dir=DOWNLOADS, prefix=".download-", delete=False
         )
@@ -421,6 +424,7 @@ def client_download(client, reader, argument):
         return
 
     temporary = Path(destination.name)
+
     try:
         with destination:
             send_message(client, f"DOWNLOAD@{argument}")
@@ -428,22 +432,39 @@ def client_download(client, reader, argument):
             if status != "FILE":
                 print(message)
                 return
-            count = int(message)
+
+            # The server sends the header as size@checksum.
+            size_text, expected_checksum = message.split("@", 1)
+            count = int(size_text)
             if count < 0:
                 raise ValueError("Invalid download size.")
+
             receive_bytes(reader, destination, count)
+
             status, message = read_status(reader)
             if status != "OK":
                 print(message)
                 return
+
+        # Verify the temporary file before saving it under its final name.
+        digest = hashlib.sha256()
+        with temporary.open("rb") as downloaded:
+            for chunk in iter(lambda: downloaded.read(64 * 1024), b""):
+                digest.update(chunk)
+
+        if digest.hexdigest() != expected_checksum.lower():
+            print("Download failed: checksum did not match.")
+            return
+
         try:
             if os.name == "nt":
-                os.rename(temporary, target)  # On Windows, fails if target exists.
+                os.rename(temporary, target)
             else:
-                os.link(temporary, target)  # Publish without overwriting.
+                os.link(temporary, target)
         except OSError as exc:
             print(f"Could not save the finished download: {exc}")
             return
+
         print(f"Downloaded to {target}")
     finally:
         temporary.unlink(missing_ok=True)
