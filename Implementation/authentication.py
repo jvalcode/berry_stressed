@@ -1,4 +1,4 @@
-
+#Final Version
 import hashlib
 import hmac
 import os
@@ -8,6 +8,7 @@ import secrets
 # Temporary user storage
 # Eventually this will be replaced with a database
 
+# Hash the password using a salt, so the original password doesn't need to be stored
 def hash_password(password, salt):
     return hashlib.pbkdf2_hmac(
         "sha256",
@@ -17,8 +18,9 @@ def hash_password(password, salt):
     )
 
 
+# Create an account with its own salt and permission level
 def create_user(password, level):
-    salt = os.urandom(16)
+    salt = os.urandom(16) # Random salt for each user
 
     return {
         "password": hash_password(password, salt),
@@ -27,12 +29,14 @@ def create_user(password, level):
     }
 
 
+# Accounts used for testing the server
 USERS = {
     "admin": create_user("secret123", "admin"),
     "user1": create_user("password123", "user")
 }
 
 
+# Check a username and password against the stored account information
 def authenticate(username, password):
 
     if username not in USERS:
@@ -42,9 +46,11 @@ def authenticate(username, password):
 
     password_hash = hash_password(password, user["salt"])
 
+    # Compare the hashes instead of the actual passwords
     return hmac.compare_digest(password_hash, user["password"])
 
 
+# Get the account type, which determines what commands they can use
 def get_access_level(username):
 
     if username in USERS:
@@ -53,14 +59,17 @@ def get_access_level(username):
     return None
 
 
+### Check which commands each account type is allowed to use
 def has_permission(level, command):
 
+    # Admin has access to all of the file commands
     if level == "admin":
         return command in [
             "TASK", "DIR", "UPLOAD", "DOWNLOAD",
             "DELETE", "SUBFOLDER_CREATE", "SUBFOLDER_DELETE"
         ]
 
+    # Regular users cannot delete files or folders
     elif level == "user":
         return command in [
             "TASK", "DIR", "UPLOAD", "DOWNLOAD",
@@ -78,8 +87,10 @@ def generate_challenge():
 # Create the response using a password-derived key
 def create_response(password, salt, challenge):
 
+    # Use the same hashing method as the server
     key = hash_password(password, salt)
 
+    # Combine the key with the challenge to prove the client knows the password
     response = hmac.new(
         key,
         challenge.encode("utf-8"),
@@ -97,12 +108,14 @@ def verify_response(username, challenge, response):
 
     user = USERS[username]
 
+    # Generate the expected response using the stored password hash
     expected = hmac.new(
         user["password"],
         challenge.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
 
+    # If both responses match, the client provided the correct password
     return hmac.compare_digest(expected, response)
 
 
@@ -133,4 +146,3 @@ if __name__ == "__main__":
     print(verify_response("admin", challenge, "wrongresponse"))
 
     '''
-
