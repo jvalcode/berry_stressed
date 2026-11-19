@@ -54,7 +54,13 @@ def handle_client(conn, addr):
         send_message(conn, "OK@Welcome to the server")
 
         while True:
-            data = reader.readline().decode(FORMAT)
+            #Limits the size of the incoming messages
+            
+            #data = reader.readline().decode(FORMAT)
+            data = reader.readline(1024 * 1024 + 1).decode(FORMAT)
+
+            if len(data) > 1024 * 1024:
+                raise ValueError("Command too large.")
 
             if not data:
                 break
