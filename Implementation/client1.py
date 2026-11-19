@@ -1,3 +1,4 @@
+#Final Version
 import socket
 import getpass
 import hashlib
@@ -24,6 +25,8 @@ def send_message(client, message):
 # Generate response to server challenge
 def create_response(password, salt, challenge):
 
+    # Use the password and salt to create the key for authentication
+    # Same method as the server uses so the responses can be compared
     key = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode(FORMAT),
@@ -31,6 +34,7 @@ def create_response(password, salt, challenge):
         200000
     )
 
+    # Use the challenge from the server to create the response
     response = hmac.new(
         key,
         challenge.encode(FORMAT),
@@ -50,6 +54,7 @@ def display_menu(access_level):
     print("DOWNLOAD")
     print("SUBFOLDER_CREATE")
 
+    # Only admins have access to deleting files and folders
     if access_level == "admin":
         print("DELETE")
         print("SUBFOLDER_DELETE")
@@ -59,6 +64,7 @@ def display_menu(access_level):
 
 def main():
 
+    # Create the client socket for connecting to the server
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     try:
@@ -76,6 +82,7 @@ def main():
         authenticated = False
         access_level = None
 
+        ### Keep asking for login until the server accepts it
         while not authenticated:
 
             print("\nLogin Required")
@@ -94,6 +101,7 @@ def main():
 
             parts = data.split("@")
 
+            # If the username is wrong or another error happens, try again
             if parts[0] == "ERROR":
                 print(parts[1])
                 continue
@@ -102,6 +110,7 @@ def main():
                 print("Invalid server response.")
                 return
 
+            # Get the salt and challenge that the server sent
             salt = bytes.fromhex(parts[1])
             challenge = parts[2]
 
@@ -112,6 +121,7 @@ def main():
                 challenge
             )
 
+            # Send the response back instead of sending the actual password
             send_message(client, f"RESPONSE@{response}")
 
             # Receive authentication result
@@ -143,10 +153,12 @@ def main():
             if not data:
                 continue
 
+            # Separate the command from any filename or other arguments
             parts = data.split(" ", 1)
             cmd = parts[0].upper()
 
             # Let file_operations.py handle file commands
+            # This keeps the upload/download code out of the main client file
             argument = parts[1] if len(parts) > 1 else ""
             if filops.run_file_command(client, reader, cmd, argument):
                 continue
@@ -171,9 +183,11 @@ def main():
 
             print(msg)
 
+            # End the command loop after logging out
             if cmd == "LOGOUT":
                 break
 
+    # Handle problems connecting to the server or losing the connection
     except (ConnectionError, OSError) as e:
         print(f"Connection error: {e}")
 
