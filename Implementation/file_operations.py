@@ -8,9 +8,7 @@ from threading import Lock
 import time
 import hashlib
 
-analyzer = None # ensure the analyzer is available to the file_operations module, 
-            #but it will be set in Server.py after the NetworkAnalyzer is created
-
+analyzer = None # ensure the analyzer is available to the file_operations module, but it will be set in Server.py after the NetworkAnalyzer is created
 
 # Shared message and transfer helpers
 SIZE = 64 * 1024
@@ -25,7 +23,6 @@ def send_message(sock, message):
         raise ValueError("Control message is too long.")
     sock.sendall(data)
 
-
 def read_message(reader):
     line = reader.readline(MAX_LINE + 1)
     if not line:
@@ -34,13 +31,11 @@ def read_message(reader):
         raise ValueError("Incomplete or oversized control message.")
     return line.decode(FORMAT).rstrip("\r\n")
 
-
 def read_status(reader):
     status, separator, message = read_message(reader).partition("@")
     if not separator:
         raise ValueError("Expected a server reply in STATUS@message format.")
     return status, message
-
 
 def send_bytes(sock, source, count):
     while count:
@@ -50,10 +45,8 @@ def send_bytes(sock, source, count):
         sock.sendall(chunk)
         count -= len(chunk)
 
-
 def receive_bytes(reader, destination, count):
-    # Reuse the SAME binary reader used for control lines. It may already
-    # have buffered the first bytes of the file.
+    # Reuse the SAME binary reader used for control lines. It may already have buffered the first bytes of the file.
     while count:
         chunk = reader.read(min(SIZE, count))
         if not chunk:
@@ -94,7 +87,6 @@ def storage_path(name):
         raise OperationError("That path is outside server_storage.")
     return path
 
-
 @contextmanager
 def reserve(path):
     with LOCK:
@@ -107,7 +99,6 @@ def reserve(path):
         with LOCK:
             ACTIVE.remove(path)
 
-
 def directory(sock):
     try:
         names = sorted(
@@ -118,7 +109,6 @@ def directory(sock):
     except OSError as exc:
         raise OperationError("Could not read the server storage folder.") from exc
     send_message(sock, "LIST@" + json.dumps(names))
-
 
 def upload(sock, reader, args):
     response_start = time.perf_counter()
@@ -193,7 +183,6 @@ def download(sock, name, offset=None):
 
             # Calculate SHA-256 of the complete file
             import hashlib
-
             sha256 = hashlib.sha256()
 
             while True:
@@ -225,12 +214,7 @@ def download(sock, name, offset=None):
             # Send remaining bytes
             start_time = time.perf_counter()
 
-            send_bytes(
-                sock,
-                source,
-                count - offset
-            )
-
+            send_bytes(sock, source, count - offset)
             transfer_time = time.perf_counter() - start_time
 
         # Confirm transfer completion
@@ -284,7 +268,6 @@ def delete(sock, name):
             raise OperationError("Could not delete the file.") from exc
     send_message(sock, "OK@File deleted.")
 
-
 def subfolder(sock, action, name):
     path = storage_path(name)
     with LOCK:
@@ -307,7 +290,6 @@ def subfolder(sock, action, name):
             ) from exc
     send_message(sock, "OK@Folder created." if action == "create" else "OK@Folder deleted.")
 
- 
 def dispatch(sock, reader, message, role):
     command, _, args = message.partition("@")
 
@@ -375,7 +357,6 @@ def dispatch(sock, reader, message, role):
 
 # Client-side operations
 DOWNLOADS = Path(__file__).resolve().parent / "downloads"
-
 
 def client_upload(client, reader, argument):
     # UPLOAD takes a local path. Send the basename, not the client's full path.
@@ -472,7 +453,6 @@ def client_download(client, reader, argument):
     finally:
         temporary.unlink(missing_ok=True)
 
-
 def client_directory(client, reader):
     send_message(client, "DIR")
     status, message = read_status(reader)
@@ -481,7 +461,6 @@ def client_directory(client, reader):
         print("\n".join(names) if names else "The folder is empty.")
     else:
         print(message)
-
 
 def run_file_command(client, reader, cmd, argument):
     """Return False for non-file commands so the original loop handles them."""
