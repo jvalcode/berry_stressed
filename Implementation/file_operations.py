@@ -121,6 +121,7 @@ def directory(sock):
 
 
 def upload(sock, reader, args):
+    response_start = time.perf_counter()
     name, separator, raw_count = args.rpartition("@")
     if not separator or not raw_count.isascii() or not raw_count.isdecimal() or len(raw_count) > 11:
         raise OperationError("Upload requires a filename and a valid byte count.")
@@ -153,7 +154,8 @@ def upload(sock, reader, args):
         temporary = Path(destination.name)
         try:
             with destination:
-                send_message(sock, "READY@Send file bytes.")
+                response_time = time.perf_counter() - response_start
+                send_message(sock, f"READY@Send file bytes.")
                 start_time = time.perf_counter()
                 receive_bytes(reader, destination, count)
                 transfer_time = time.perf_counter() - start_time
@@ -167,9 +169,10 @@ def upload(sock, reader, args):
         analyzer.record_transfer( client=str(sock.getpeername()),
             operation="Upload",
             filename=name, file_size=count / (1024 * 1024),
-            transfer_time=transfer_time, response_time = 0 )
+            transfer_time=transfer_time, response_time = response_time )
 
 def download(sock, name, offset=None):
+    response_start = time.perf_counter()
     path = storage_path(name)
 
     with reserve(path):
@@ -213,11 +216,11 @@ def download(sock, name, offset=None):
             # Move to requested position
             source.seek(offset)
 
+            response_time = time.perf_counter() - response_start
+
             # Send file information
             send_message(
-                sock,
-                f"FILE@{count}@{file_hash}"
-            )
+                sock, f"FILE@{count}@{file_hash}" )
 
             # Send remaining bytes
             start_time = time.perf_counter()
@@ -241,7 +244,7 @@ def download(sock, name, offset=None):
                 filename=name,
                 file_size=count / (1024 * 1024),
                 transfer_time=transfer_time,
-                response_time=0
+                response_time=response_time
             )
 
 #def download(sock, name):
@@ -266,7 +269,7 @@ def download(sock, name, offset=None):
         #analyzer.record_transfer( client=str(sock.getpeername()),
             #operation="Download",
             #filename=name, file_size=count / (1024 * 1024),
-           # transfer_time=transfer_time, response_time = 0 )
+           # transfer_time=transfer_time, response_time = response_time )
         
 def delete(sock, name):
     path = storage_path(name)
