@@ -7,7 +7,6 @@ import getpass
 from pathlib import Path
 
 # Server configaration
-
 SERVER_IP = "10.200.102.209"
 PORT = 4450
 
@@ -17,7 +16,6 @@ CHUNK_SIZE = 1024 * 1024
 DOWNLOADS = Path(__file__).resolve().parent / "downloads"
 
 # Network communication
-
 def send_message(sock, message):
     """Send a newline-terminated message."""
     sock.sendall((message + "\n").encode(FORMAT))
@@ -46,7 +44,6 @@ def read_status(reader):
     return status, message
 
 # Authentication
-
 def authenticate(client, reader):
     """Authenticate using the existing server protocol."""
 
@@ -98,7 +95,6 @@ def authenticate(client, reader):
     print("Authentication successful!")
 
 # SHA-256 verification
-
 def calculate_sha256(filename):
     """Calculate SHA-256 hash of a file."""
 
@@ -117,7 +113,6 @@ def calculate_sha256(filename):
     return sha256.hexdigest()
 
 # Resumable Download
-
 def resume_download(client, reader, filename):
     """Download a file or resume an interrupted download."""
 
